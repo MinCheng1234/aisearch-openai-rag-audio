@@ -1,4 +1,6 @@
 import re
+import requests
+import os
 from typing import Any
 
 from azure.core.credentials import AzureKeyCredential
@@ -48,6 +50,25 @@ _grounding_tool_schema = {
         "additionalProperties": False
     }
 }
+
+
+_email_tool_schema = {
+            "type": "function",
+            "name": "email",
+            "description": "Sends an email",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to_email": {"type": "string", "description": "The recipient's email address"},
+                    "subject": {"type": "string", "description": "The subject of the email"},
+                    "body": {"type": "string", "description": "The body of the email"}
+                },
+            "required": ["to_email", "subject", "body"],
+            "additionalProperties": False
+            }
+        
+    }
+    
 
 async def _search_tool(
     search_client: SearchClient, 
@@ -100,6 +121,23 @@ async def _report_grounding_tool(search_client: SearchClient, identifier_field: 
         docs.append({"chunk_id": r[identifier_field], "title": r[title_field], "chunk": r[content_field]})
     return ToolResult({"sources": docs}, ToolResultDirection.TO_CLIENT)
 
+async def _send_email_tool(args: Any)-> ToolResult:
+    """Send an email by calling the Azure Function."""
+    function_url = "https://sendemailopenai.azurewebsites.net/api/send-email?code=rOTWDrgsve762-9WKQChXUuIzZjTdUf42z6D53QFt8GtAzFuXE_rkA%3D%3D"
+    # Prepare the payload for the Azure Function
+    payload = {
+        "to_email": args["to_email"],
+        "subject": args["subject"],
+        "body": args["body"]
+    }
+    print(payload)
+    # Make the POST request to the Azure Function
+    response = requests.post(function_url, json=payload)
+    
+    if response.status_code != 200:
+        return {"error": response.json()}
+    return ToolResult(response, ToolResultDirection.TO_CLIENT)
+
 def attach_rag_tools(rtmt: RTMiddleTier,
     credentials: AzureKeyCredential | DefaultAzureCredential,
     search_endpoint: str, search_index: str,
@@ -113,6 +151,7 @@ def attach_rag_tools(rtmt: RTMiddleTier,
     if not isinstance(credentials, AzureKeyCredential):
         credentials.get_token("https://search.azure.com/.default") # warm this up before we start getting requests
     search_client = SearchClient(search_endpoint, search_index, credentials, user_agent="RTMiddleTier")
-
+    
+    rtmt.tools["email"] = Tool(schema=_email_tool_schema, target=lambda args: _send_email_tool(args))
     rtmt.tools["search"] = Tool(schema=_search_tool_schema, target=lambda args: _search_tool(search_client, semantic_configuration, identifier_field, content_field, embedding_field, use_vector_query, args))
     rtmt.tools["report_grounding"] = Tool(schema=_grounding_tool_schema, target=lambda args: _report_grounding_tool(search_client, identifier_field, title_field, content_field, args))
