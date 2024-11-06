@@ -3,8 +3,10 @@ import logging
 import os
 import subprocess
 
+from azure.core.credentials import AzureKeyCredential
 from azure.core.exceptions import ResourceExistsError
 from azure.identity import AzureDeveloperCliCredential
+from azure.identity import DefaultAzureCredential
 from azure.search.documents.indexes import SearchIndexClient, SearchIndexerClient
 from azure.search.documents.indexes.models import (
     AzureOpenAIEmbeddingSkill,
@@ -59,9 +61,21 @@ def load_azd_env():
     load_dotenv(env_file_path, override=True)
 
 
-def setup_index(azure_credential, index_name, azure_search_endpoint, azure_storage_connection_string, azure_storage_container, azure_openai_embedding_endpoint, azure_openai_embedding_deployment, azure_openai_embedding_model, azure_openai_embeddings_dimensions):
-    index_client = SearchIndexClient(azure_search_endpoint, azure_credential)
-    indexer_client = SearchIndexerClient(azure_search_endpoint, azure_credential)
+def setup_index(azure_search_credential, 
+                index_name, 
+                azure_search_endpoint, 
+                azure_storage_connection_string, 
+                azure_storage_container, 
+                azure_openai_embedding_endpoint, 
+                azure_openai_embedding_deployment, 
+                azure_openai_embedding_model, 
+                azure_openai_embeddings_dimensions,
+                azure_openai_embedding_credential):
+    
+    search_credential = AzureKeyCredential(azure_search_credential)
+    
+    index_client = SearchIndexClient(azure_search_endpoint, search_credential)
+    indexer_client = SearchIndexerClient(azure_search_endpoint, search_credential)
 
     data_source_connections = indexer_client.get_data_source_connections()
     if index_name in [ds.name for ds in data_source_connections]:
@@ -106,7 +120,8 @@ def setup_index(azure_credential, index_name, azure_search_endpoint, azure_stora
                             azure_open_ai_parameters=AzureOpenAIParameters(
                                 resource_uri=azure_openai_embedding_endpoint,
                                 deployment_id=azure_openai_embedding_deployment,
-                                model_name=azure_openai_embedding_model
+                                model_name=azure_openai_embedding_model,
+                                api_key=azure_openai_embedding_credential
                             )
                         )
                     ],
@@ -145,7 +160,7 @@ def setup_index(azure_credential, index_name, azure_search_endpoint, azure_stora
                     AzureOpenAIEmbeddingSkill(
                         context="/document/pages/*",
                         resource_uri=azure_openai_embedding_endpoint,
-                        api_key=None,
+                        api_key=azure_openai_embedding_credential,
                         deployment_id=azure_openai_embedding_deployment,
                         model_name=azure_openai_embedding_model,
                         dimensions=azure_openai_embeddings_dimensions,
@@ -184,13 +199,18 @@ def setup_index(azure_credential, index_name, azure_search_endpoint, azure_stora
             )
         )
 
-def upload_documents(azure_credential, indexer_name, azure_search_endpoint, azure_storage_endpoint, azure_storage_container):
-    indexer_client = SearchIndexerClient(azure_search_endpoint, azure_credential)
+def upload_documents(azure_search_credential, indexer_name, azure_search_endpoint, azure_storage_container, azure_storage_connection_string):
+    #search_credential = DefaultAzureCredential()
+    search_credential = AzureKeyCredential(azure_search_credential)
+    indexer_client = SearchIndexerClient(azure_search_endpoint, search_credential)
     # Upload the documents in /data folder to the blob storage container
+    '''
     blob_client = BlobServiceClient(
         account_url=azure_storage_endpoint, credential=azure_credential,
         max_single_put_size=4 * 1024 * 1024
     )
+    '''
+    blob_client = BlobServiceClient.from_connection_string(azure_storage_connection_string)
     container_client = blob_client.get_container_client(azure_storage_container)
     if not container_client.exists():
         container_client.create_container()
@@ -213,6 +233,8 @@ def upload_documents(azure_credential, indexer_name, azure_search_endpoint, azur
         logger.info("Indexer started. Any unindexed blobs should be indexed in a few minutes, check the Azure Portal for status.")
     except ResourceExistsError:
         logger.info("Indexer already running, not starting again")
+    except Exception as e:
+        logger.info(f"Unexpected error: {str(e)}")
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.WARNING, format="%(message)s", datefmt="[%X]", handlers=[RichHandler(rich_tracebacks=True)])
@@ -232,18 +254,20 @@ if __name__ == "__main__":
 
     # Used to name index, indexer, data source and skillset
     AZURE_SEARCH_INDEX = os.environ["AZURE_SEARCH_INDEX"]
-    AZURE_OPENAI_EMBEDDING_ENDPOINT = os.environ["AZURE_OPENAI_ENDPOINT"]
+    AZURE_OPENAI_EMBEDDING_ENDPOINT = os.environ["AZURE_OPENAI_EMBEDDING_ENDPOINT"]
     AZURE_OPENAI_EMBEDDING_DEPLOYMENT = os.environ["AZURE_OPENAI_EMBEDDING_DEPLOYMENT"]
     AZURE_OPENAI_EMBEDDING_MODEL = os.environ["AZURE_OPENAI_EMBEDDING_MODEL"]
-    EMBEDDINGS_DIMENSIONS = 3072
+    AZURE_OPENAI_EMBEDDING_CREDENTIAL =os.environ["AZURE_OPENAI_EMBEDDING_CREDENTIAL"]
+    EMBEDDINGS_DIMENSIONS = 1536
     AZURE_SEARCH_ENDPOINT = os.environ["AZURE_SEARCH_ENDPOINT"]
-    AZURE_STORAGE_ENDPOINT = os.environ["AZURE_STORAGE_ENDPOINT"]
+    #AZURE_STORAGE_ENDPOINT = os.environ["AZURE_STORAGE_ENDPOINT"]
+    AZURE_SEARCH_CREDENTIAL= os.environ["AZURE_SEARCH_CREDENTIAL"]
     AZURE_STORAGE_CONNECTION_STRING = os.environ["AZURE_STORAGE_CONNECTION_STRING"]
     AZURE_STORAGE_CONTAINER = os.environ["AZURE_STORAGE_CONTAINER"]
 
-    azure_credential = AzureDeveloperCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"], process_timeout=60)
+    #azure_credential = AzureDeveloperCliCredential(tenant_id=os.environ["AZURE_TENANT_ID"], process_timeout=60)
 
-    setup_index(azure_credential,
+    setup_index(azure_search_credential=AZURE_SEARCH_CREDENTIAL,
         index_name=AZURE_SEARCH_INDEX, 
         azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
         azure_storage_connection_string=AZURE_STORAGE_CONNECTION_STRING,
@@ -251,10 +275,11 @@ if __name__ == "__main__":
         azure_openai_embedding_endpoint=AZURE_OPENAI_EMBEDDING_ENDPOINT,
         azure_openai_embedding_deployment=AZURE_OPENAI_EMBEDDING_DEPLOYMENT,
         azure_openai_embedding_model=AZURE_OPENAI_EMBEDDING_MODEL,
+        azure_openai_embedding_credential=AZURE_OPENAI_EMBEDDING_CREDENTIAL,
         azure_openai_embeddings_dimensions=EMBEDDINGS_DIMENSIONS)
 
-    upload_documents(azure_credential,
+    upload_documents(azure_search_credential=AZURE_SEARCH_CREDENTIAL,
         indexer_name=AZURE_SEARCH_INDEX,
         azure_search_endpoint=AZURE_SEARCH_ENDPOINT,
-        azure_storage_endpoint=AZURE_STORAGE_ENDPOINT,
+        azure_storage_connection_string=AZURE_STORAGE_CONNECTION_STRING,
         azure_storage_container=AZURE_STORAGE_CONTAINER)
