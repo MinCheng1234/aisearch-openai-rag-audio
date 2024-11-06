@@ -22,6 +22,7 @@ class ToolResult:
     def to_text(self) -> str:
         if self.text is None:
             return ""
+        
         return self.text if type(self.text) == str else json.dumps(self.text)
 
 class Tool:

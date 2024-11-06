@@ -136,7 +136,7 @@ async def _send_email_tool(args: Any)-> ToolResult:
     
     if response.status_code != 200:
         return {"error": response.json()}
-    return ToolResult(response, ToolResultDirection.TO_CLIENT)
+    return ToolResult(response.text, ToolResultDirection.TO_CLIENT)
 
 def attach_rag_tools(rtmt: RTMiddleTier,
     credentials: AzureKeyCredential | DefaultAzureCredential,
